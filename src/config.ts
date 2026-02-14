@@ -2,7 +2,7 @@ import { registerAs } from '@nestjs/config';
 
 export default registerAs('app', () => ({
   port: parseInt(process.env.PORT ?? '3000', 10),
-  apiKey: process.env.API_KEY ?? '',
+  authKey: process.env.USA_FS_COLLECTOR_AUTH_KEY ?? '',
   databaseUrl: process.env.SUPABASE_DB_TRANSACTION_POOLER_URL ?? '',
 }));
 
