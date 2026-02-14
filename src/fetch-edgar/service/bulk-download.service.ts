@@ -26,10 +26,10 @@ export class BulkDownloadService {
     }
 
     if (existsSync(dest)) rmSync(dest, { recursive: true });
-    mkdirSync(DATA_DIR, { recursive: true });
+    mkdirSync(dest, { recursive: true });
 
     await this.downloadZip(zipPath);
-    await this.extractZip(zipPath, DATA_DIR);
+    await this.extractZip(zipPath, dest);
     await unlink(zipPath).catch(() => {});
 
     this.logger.log(`Bulk data extracted to ${dest}`);
