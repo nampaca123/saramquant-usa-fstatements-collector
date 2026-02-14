@@ -101,33 +101,42 @@ export class AppController {
       return;
     }
 
+    const BATCH = 50;
     const allStatements: FinancialStatement[] = [];
     let matched = 0;
     let failed = 0;
 
-    for (let i = 0; i < stocks.length; i++) {
-      const { stockId, symbol } = stocks[i];
-      const cik = tickerToCik.get(symbol.toUpperCase());
-      if (!cik) continue;
+    for (let i = 0; i < stocks.length; i += BATCH) {
+      const batch = stocks.slice(i, i + BATCH);
 
-      try {
-        const filePath = join(dataDir, `CIK${String(cik).padStart(10, '0')}.json`);
-        const raw = await readFile(filePath, 'utf-8').catch(() => null);
-        if (!raw) continue;
+      const results = await Promise.all(
+        batch.map(async ({ stockId, symbol }) => {
+          const cik = tickerToCik.get(symbol.toUpperCase());
+          if (!cik) return null;
+          try {
+            const filePath = join(dataDir, `CIK${String(cik).padStart(10, '0')}.json`);
+            const raw = await readFile(filePath, 'utf-8').catch(() => null);
+            if (!raw) return null;
+            const facts = JSON.parse(raw);
+            return { stockId, symbol, stmts: this.factsParser.extractFromFacts(stockId, facts) };
+          } catch (err) {
+            this.logger.warn(`Skip ${symbol} (${stockId}): ${err}`);
+            return { stockId, symbol, stmts: null };
+          }
+        }),
+      );
 
-        const facts = JSON.parse(raw);
-        const stmts = this.factsParser.extractFromFacts(stockId, facts);
-        allStatements.push(...stmts);
-        matched++;
-      } catch (err) {
-        this.logger.warn(`Skip ${symbol} (${stockId}): ${err}`);
-        failed++;
+      for (const r of results) {
+        if (!r) continue;
+        if (r.stmts) { allStatements.push(...r.stmts); matched++; }
+        else { failed++; }
       }
 
-      if ((i + 1) % 500 === 0) {
-        this.updateProgress(jobId, 'parsing', i + 1, stocks.length);
+      if ((i + BATCH) % 500 < BATCH) {
+        const parsed = Math.min(i + BATCH, stocks.length);
+        this.updateProgress(jobId, 'parsing', parsed, stocks.length);
         this.logger.log(
-          `Parsed ${i + 1}/${stocks.length} stocks, ${allStatements.length} stmts`,
+          `Parsed ${parsed}/${stocks.length} stocks, ${allStatements.length} stmts`,
         );
       }
     }
