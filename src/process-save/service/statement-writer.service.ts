@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import chunk from 'lodash/chunk';
 import { DatabasePool } from '../../database/lib/pool';
 import { FinancialStatement } from './facts-parser.service';
 
@@ -13,14 +14,11 @@ export class StatementWriterService {
   async upsertBatch(statements: FinancialStatement[]): Promise<number> {
     if (statements.length === 0) return 0;
 
-    let total = 0;
-    for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
-      const chunk = statements.slice(i, i + CHUNK_SIZE);
-      await this.upsertChunk(chunk);
-      total += chunk.length;
-    }
-    this.logger.log(`Upserted ${total} financial statements`);
-    return total;
+    const chunks = chunk(statements, CHUNK_SIZE);
+    for (const c of chunks) await this.upsertChunk(c);
+
+    this.logger.log(`Upserted ${statements.length} financial statements`);
+    return statements.length;
   }
 
   private async upsertChunk(chunk: FinancialStatement[]): Promise<void> {

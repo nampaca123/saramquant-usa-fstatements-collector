@@ -9,16 +9,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
 import { v4 as uuid } from 'uuid';
 import { ApiKeyGuard } from './api-key.guard';
 import { BulkDownloadService } from './fetch-edgar/service/bulk-download.service';
 import { TickerMapService } from './fetch-edgar/service/ticker-map.service';
 import { StockListService } from './database/service/stock-list.service';
-import { FactsParserService } from './process-save/service/facts-parser.service';
+import { FactsReaderService } from './process-save/service/facts-reader.service';
 import { StatementWriterService } from './process-save/service/statement-writer.service';
-import type { FinancialStatement } from './process-save/service/facts-parser.service';
 
 interface JobProgress {
   phase: string;
@@ -44,7 +41,7 @@ export class AppController {
     private readonly bulkDownload: BulkDownloadService,
     private readonly tickerMap: TickerMapService,
     private readonly stockList: StockListService,
-    private readonly factsParser: FactsParserService,
+    private readonly factsReader: FactsReaderService,
     private readonly statementWriter: StatementWriterService,
   ) {}
 
@@ -101,51 +98,17 @@ export class AppController {
       return;
     }
 
-    const BATCH = 50;
-    const allStatements: FinancialStatement[] = [];
-    let matched = 0;
-    let failed = 0;
-
-    for (let i = 0; i < stocks.length; i += BATCH) {
-      const batch = stocks.slice(i, i + BATCH);
-
-      const results = await Promise.all(
-        batch.map(async ({ stockId, symbol }) => {
-          const cik = tickerToCik.get(symbol.toUpperCase());
-          if (!cik) return null;
-          try {
-            const filePath = join(dataDir, `CIK${String(cik).padStart(10, '0')}.json`);
-            const raw = await readFile(filePath, 'utf-8').catch(() => null);
-            if (!raw) return null;
-            const facts = JSON.parse(raw);
-            return { stockId, symbol, stmts: this.factsParser.extractFromFacts(stockId, facts) };
-          } catch (err) {
-            this.logger.warn(`Skip ${symbol} (${stockId}): ${err}`);
-            return { stockId, symbol, stmts: null };
-          }
-        }),
-      );
-
-      for (const r of results) {
-        if (!r) continue;
-        if (r.stmts) { allStatements.push(...r.stmts); matched++; }
-        else { failed++; }
-      }
-
-      if ((i + BATCH) % 500 < BATCH) {
-        const parsed = Math.min(i + BATCH, stocks.length);
-        this.updateProgress(jobId, 'parsing', parsed, stocks.length);
-        this.logger.log(
-          `Parsed ${parsed}/${stocks.length} stocks, ${allStatements.length} stmts`,
-        );
-      }
-    }
+    this.updateProgress(jobId, 'parsing', 0, stocks.length);
+    const { statements, matched, failed } = await this.factsReader.readAndParse(
+      dataDir,
+      stocks,
+      tickerToCik,
+      (parsed, total) => this.updateProgress(jobId, 'parsing', parsed, total),
+    );
 
     this.updateProgress(jobId, 'writing to DB');
-    const saved = await this.statementWriter.upsertBatch(allStatements);
-    this.logger.log(
-      `Done: ${saved} saved from ${matched} stocks, ${failed} failed`,
-    );
+    const saved = await this.statementWriter.upsertBatch(statements);
+    this.logger.log(`Done: ${saved} saved from ${matched} stocks, ${failed} failed`);
     this.completeJob(jobId, saved, failed);
   }
 
