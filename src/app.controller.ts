@@ -20,9 +20,16 @@ import { FactsParserService } from './process-save/service/facts-parser.service'
 import { StatementWriterService } from './process-save/service/statement-writer.service';
 import type { FinancialStatement } from './process-save/service/facts-parser.service';
 
+interface JobProgress {
+  phase: string;
+  parsed?: number;
+  total?: number;
+}
+
 interface JobStatus {
   jobId: string;
   status: 'processing' | 'completed' | 'failed';
+  progress?: JobProgress;
   result?: { success: number; failed: number };
   error?: string;
 }
@@ -73,9 +80,16 @@ export class AppController {
     return { status: 'ok', timestamp: new Date().toISOString() };
   }
 
+  private updateProgress(jobId: string, phase: string, parsed?: number, total?: number): void {
+    const job = jobs.get(jobId);
+    if (job) job.progress = { phase, parsed, total };
+  }
+
   private async runPipeline(jobId: string): Promise<void> {
+    this.updateProgress(jobId, 'downloading');
     const dataDir = await this.bulkDownload.download();
 
+    this.updateProgress(jobId, 'loading metadata');
     const [tickerToCik, stocks] = await Promise.all([
       this.tickerMap.fetch(),
       this.stockList.getActiveUsStocks(),
@@ -110,13 +124,15 @@ export class AppController {
         failed++;
       }
 
-      if ((i + 1) % 1000 === 0) {
+      if ((i + 1) % 500 === 0) {
+        this.updateProgress(jobId, 'parsing', i + 1, stocks.length);
         this.logger.log(
           `Parsed ${i + 1}/${stocks.length} stocks, ${allStatements.length} stmts`,
         );
       }
     }
 
+    this.updateProgress(jobId, 'writing to DB');
     const saved = await this.statementWriter.upsertBatch(allStatements);
     this.logger.log(
       `Done: ${saved} saved from ${matched} stocks, ${failed} failed`,
