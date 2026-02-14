@@ -28,7 +28,6 @@
     "pg": "^8.18.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "unzipper": "^0.12.3",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
@@ -44,7 +43,6 @@
     "@types/node": "^24.10.13",
     "@types/pg": "^8.16.0",
     "@types/supertest": "^6.0.2",
-    "@types/unzipper": "^0.10.11",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.1.8",

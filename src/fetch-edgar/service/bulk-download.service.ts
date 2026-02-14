@@ -2,9 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createWriteStream, existsSync, statSync, rmSync, mkdirSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
-import { Open } from 'unzipper';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { DATA_DIR } from '../../config';
 import { createEdgarHttp } from '../lib/edgar-http';
+
+const execFileAsync = promisify(execFile);
 
 const BULK_FACTS_URL =
   'https://www.sec.gov/Archives/edgar/daily-index/xbrl/companyfacts.zip';
@@ -107,7 +110,6 @@ export class BulkDownloadService {
 
   private async extractZip(zipPath: string, destDir: string): Promise<void> {
     this.logger.log('Extracting companyfacts.zip...');
-    const directory = await Open.file(zipPath);
-    await directory.extract({ path: destDir });
+    await execFileAsync('unzip', ['-o', '-q', zipPath, '-d', destDir]);
   }
 }
