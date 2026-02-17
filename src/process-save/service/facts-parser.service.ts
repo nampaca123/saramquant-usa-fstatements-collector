@@ -23,20 +23,37 @@ const GAAP_CONCEPTS: Record<string, string[]> = {
     'Revenues',
     'SalesRevenueNet',
     'RevenueFromContractWithCustomerIncludingAssessedTax',
+    'SalesRevenueGoodsNet',
+    'SalesRevenueServicesNet',
+    'RegulatedAndUnregulatedOperatingRevenue',
+    'HealthCareOrganizationRevenue',
+    'RealEstateRevenueNet',
+    'OilAndGasRevenue',
+    'InterestAndDividendIncomeOperating',
+    'InterestIncomeExpenseAfterProvisionForLoanLoss',
+    'BrokerageCommissionsRevenue',
   ],
   operating_income: ['OperatingIncomeLoss'],
-  net_income: ['NetIncomeLoss'],
+  net_income: [
+    'NetIncomeLoss',
+    'ProfitLoss',
+    'IncomeLossAttributableToParent',
+    'NetIncomeLossAvailableToCommonStockholdersBasic',
+  ],
   total_assets: ['Assets'],
   total_liabilities: ['Liabilities'],
   total_equity: [
     'StockholdersEquity',
     'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
+    'MembersEquity',
   ],
 };
 
 const SHARES_CONCEPTS: [string, string][] = [
   ['dei', 'EntityCommonStockSharesOutstanding'],
   ['us-gaap', 'CommonStockSharesOutstanding'],
+  ['us-gaap', 'SharesOutstanding'],
+  ['us-gaap', 'WeightedAverageNumberOfSharesOutstandingBasic'],
 ];
 
 const FORM_FY = new Set(['10-K', '10-K/A']);
@@ -73,15 +90,21 @@ function pickConcept(
   namespace: Record<string, unknown>,
   candidates: string[],
 ): XbrlEntry[] {
+  let best: XbrlEntry[] = [];
+  let bestCount = 0;
   for (const concept of candidates) {
     const node = namespace[concept] as Record<string, unknown> | undefined;
     if (!node) continue;
     const units = node.units as Record<string, XbrlEntry[]> | undefined;
     const entries = units?.USD;
     if (!entries) continue;
-    if (entries.some((e) => (e.fy ?? 0) >= MIN_RECENT_YEAR)) return entries;
+    const recent = entries.filter((e) => (e.fy ?? 0) >= MIN_RECENT_YEAR).length;
+    if (recent > bestCount) {
+      best = entries;
+      bestCount = recent;
+    }
   }
-  return [];
+  return best;
 }
 
 function placeEntry(
@@ -92,21 +115,24 @@ function placeEntry(
 ): void {
   const { form = '', fy, fp, val, frame = '' } = entry;
   if (!fy || val === undefined || val === null) return;
+  if (fy > 2100 || fy < 1900) return;
 
   if (FORM_FY.has(form) && fp === 'FY') {
     if (BS_FIELDS.has(field) && frame && !INSTANT_RE.test(frame)) return;
     const acc = fyData.get(fy) ?? {};
-    acc[field] = val;
+    if (acc[field] === undefined) acc[field] = val;
     fyData.set(fy, acc);
   } else if (FORM_Q.has(form) && fp && fp in REPORT_MAP) {
     if (IS_FIELDS.has(field)) {
-      if (!SINGLE_Q_RE.test(frame)) return;
+      if (frame && !SINGLE_Q_RE.test(frame)) return;
     } else if (BS_FIELDS.has(field)) {
       if (frame && !INSTANT_RE.test(frame)) return;
     }
     const key = `${fy}:${fp}`;
     const acc = qData.get(key) ?? {};
-    acc[field] = val;
+    if (acc[field] === undefined || (frame && SINGLE_Q_RE.test(frame))) {
+      acc[field] = val;
+    }
     qData.set(key, acc);
   }
 }
