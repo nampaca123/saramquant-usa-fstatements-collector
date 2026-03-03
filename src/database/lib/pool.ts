@@ -12,7 +12,7 @@ export class DatabasePool implements OnModuleDestroy {
   ) {
     this.pool = new Pool({
       connectionString: cfg.databaseUrl,
-      max: 10,
+      max: 3,
       idleTimeoutMillis: 30_000,
     });
   }
