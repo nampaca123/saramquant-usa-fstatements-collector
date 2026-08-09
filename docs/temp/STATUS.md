@@ -15,6 +15,14 @@
 | P11 CI/CD·배포 | **완료** — PR #1 머지, main apply 성공 (2026-08-09 14:05 KST) |
 | P12 스모크 | **완료** — 2차(smoke2-260810, 20종목 제한): 18종목/71행 MERGE, status ok, 3분 4초 |
 | P13 콜드 완주 | **완료** — cold-260810 (SFN→Fargate Spot, 폴백 없음): 5,879종목 매칭/0 실패, **45,810행 MERGE**, 4.5분, run-summary ok. Athena 검증 45,810행/4,672종목, DuckDB 소비 경로 확인(KR 19,505행과 파티션 공존 정상) |
+| 최종 리뷰 | **완료** — 계약 위반 0건(calc 실코드 대조). MAJOR 6건 수정: partial 1% 임계+exit1 전파, run 스코프 staging, Athena 취소/재시도, package-lock+npm ci, IAM prefix 축소, TRY_CAST. PR #2 머지·배포(rev2) |
+| 검증 재실행 | **완료** — cold2-260810: status ok, 4,408종목/44,571행, 266초. run 스코프 staging 정리 확인, 축소 IAM 통과. 구식 고정 이름 staging 테이블 수동 DROP 완료 |
+
+## ⚠️ 사용자 액션 필요
+
+- **SNS 이메일 구독이 PendingConfirmation** — nampaca123@gmail.com 수신함에서
+  "AWS Notification - Subscription Confirmation" 메일의 Confirm 링크 클릭 필요.
+  이게 유일한 실패 알람 채널이라 확인 전까지 알람이 무음이다.
 
 ### P12 1차 스모크 소견 (2026-08-09 15:07 UTC, run_id=smoke-260810)
 - `status:error, cause:"no active US stocks"` — **수집기 결함 아님.** calc 세션이 stocks를
