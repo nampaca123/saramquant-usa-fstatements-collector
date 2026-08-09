@@ -13,8 +13,16 @@
 | P7 Dockerfile (node:24-slim, 확장 베이크) | **완료** (CI 빌드에서 오프라인 LOAD 검증됨) |
 | P8–P10 Terraform (VPC·ECS·IAM·SFN·EventBridge·SNS) | **완료** |
 | P11 CI/CD·배포 | **완료** — PR #1 머지, main apply 성공 (2026-08-09 14:05 KST) |
-| P12 스모크 | **차단** — calc 세션의 Glue DB·워크그룹·stocks 대기 (모니터 가동 중) |
-| P13 콜드 완주 | 대기 |
+| P12 스모크 | **1차 실행 완료(경로 검증 성공)** — 인프라 전 구간 정상: zip 1336MB 다운로드(~5초, us-east-1), 해제, 티커맵 10,398건, DuckDB stocks 읽기, run-summary 기록/업로드, exit 1 전파. 데이터만 없었음(아래) |
+| P13 콜드 완주 | 대기 — stocks 안정 적재 후 |
+
+### P12 1차 스모크 소견 (2026-08-09 15:07 UTC, run_id=smoke-260810)
+- `status:error, cause:"no active US stocks"` — **수집기 결함 아님.** calc 세션이 stocks를
+  "전체 DELETE→소량 INSERT" 사이클로 테스트 중이라, 읽은 시점의 current snapshot이 records=0였음
+  (스냅샷 히스토리로 확인). 현재 3행 수준.
+- 활성 US ≥100이 2회 연속(10분 간격) 관측되면 스모크 재실행 예정. 모니터 가동 중.
+- calc 세션 참고: 운영 스케줄상 겹침 없음(우리 18:00 UTC vs calc us 00:00/kr 09:00 UTC).
+  다만 stocks가 MERGE(스펙 §2.3)가 아닌 delete-all 패턴으로 계속 쓰이면 읽기 시점 레이스가 생기니 확인 요망.
 
 배포된 리소스: SFN `saramquant-usa-fs-pipeline`(us-east-1), ECS 클러스터 `saramquant-usa-fs`(FARGATE+SPOT),
 태스크 정의 rev1 (2vCPU/4GB/40GiB), ECR 이미지 `0e6670b33357`, EventBridge 4규칙(q1–q4), SNS 알람.
