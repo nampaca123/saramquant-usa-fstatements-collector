@@ -1,13 +1,6 @@
 locals {
   account_id = data.aws_caller_identity.current.account_id
-  # 이 수집기가 만지는 서울 버킷 prefix들 — 그 밖(다른 서비스 데이터)은 접근 불가
   bucket_arn = "arn:aws:s3:::${var.bucket_name}"
-  data_prefixes = [
-    "staging/financial_statements/*",
-    "warehouse/*", # Athena Iceberg가 caller 자격으로 데이터/메타 파일을 읽고 쓴다 + stocks 읽기
-    "run-summary/*",
-    "athena-results/*",
-  ]
 }
 
 # ── 실행 롤: ECR pull + 로그 (인프라 계정) ───────────────────────────
@@ -45,10 +38,36 @@ data "aws_iam_policy_document" "task_perms" {
     resources = [local.bucket_arn]
   }
 
+  # 쓰기/삭제는 이 수집기 소유 prefix만 — warehouse/* 전체를 열면 calc 소유 테이블까지 지울 수 있다.
+  # 멀티파트 액션은 테이블이 커져 Athena/OPTIMIZE가 멀티파트 업로드로 전환될 때 필요.
   statement {
-    sid       = "S3DataPrefixes"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = [for p in local.data_prefixes : "${local.bucket_arn}/${p}"]
+    sid = "S3OwnPrefixesRW"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts",
+    ]
+    resources = [
+      "${local.bucket_arn}/warehouse/financial_statements/*",
+      "${local.bucket_arn}/staging/financial_statements/*",
+      "${local.bucket_arn}/athena-results/*",
+    ]
+  }
+
+  # stocks는 읽기 전용 (DuckDB iceberg_scan)
+  statement {
+    sid       = "S3StocksReadOnly"
+    actions   = ["s3:GetObject"]
+    resources = ["${local.bucket_arn}/warehouse/stocks/*"]
+  }
+
+  # run-summary는 자기 파일 하나에만 쓰기 — calc의 신선도 게이트 파일 덮어쓰기 차단
+  statement {
+    sid       = "S3RunSummaryOwnFile"
+    actions   = ["s3:PutObject"]
+    resources = ["${local.bucket_arn}/run-summary/usa_fstatements.json"]
   }
 
   # Glue 카탈로그(서울) — stocks metadata_location 조회 + staging DROP/CREATE + Iceberg 커밋
@@ -109,6 +128,11 @@ data "aws_iam_policy_document" "sfn_perms" {
     sid       = "RunCollectorTask"
     actions   = ["ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks"]
     resources = ["${aws_ecs_task_definition.collector.arn_without_revision}:*"]
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [aws_ecs_cluster.main.arn]
+    }
   }
 
   # DescribeTasks/StopTask는 task ARN 대상이라 별도 허용 필요

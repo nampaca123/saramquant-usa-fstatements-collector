@@ -41,7 +41,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.spot_error",
+          "ResultPath": null,
           "Next": "RunTaskOnDemand"
         }
       ],

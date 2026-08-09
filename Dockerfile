@@ -1,7 +1,7 @@
 FROM node:24-slim AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY tsconfig*.json nest-cli.json ./
 COPY src/ ./src/
 RUN npm run build
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip ca-certif
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 ENV DUCKDB_EXTENSION_DIR=/opt/duckdb/extensions
 # 확장을 빌드 시점에 굽고 곧바로 오프라인 로드를 검증한다 — 실패하면 빌드가 죽는다

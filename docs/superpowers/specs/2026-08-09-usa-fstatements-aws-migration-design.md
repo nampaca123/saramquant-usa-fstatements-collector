@@ -58,8 +58,8 @@ EventBridge (분기 4회, UTC 4/5·5/20·8/19·11/19 18:00 = us-fs 24h 전)
 ```
 
 - MERGE 키: `(stock_id, fiscal_year, report_type)` + `market='US'` 조건. 기존 `ON CONFLICT DO UPDATE`와 동등.
-- staging 테이블은 Glue DB `saramquant`의 `financial_statements_staging_us` 하나를 run마다
-  DROP/CREATE로 위치만 갈아끼운다 (동시 실행 없음 — 스케줄 분기 4회 + 수동).
+- staging 테이블은 **run 스코프 이름**(`financial_statements_staging_us_<run_id>`)으로 생성하고
+  finally에서 DROP — 수동+예약/폴백 재실행이 겹쳐도 서로의 staging을 밟지 않는다 (최종 리뷰 M2 반영).
 - 크로스 리전: 컴퓨트 us-east-1 ↔ 데이터 ap-northeast-2. SEC 다운로드(수 GB)는 us-east-1 로컬,
   서울로 가는 것은 staging Parquet 수 MB뿐이라 전송 비용 무시 가능. Athena/Glue API는 리전 지정 SDK 호출.
 
@@ -119,8 +119,10 @@ EventBridge (분기 4회, UTC 4/5·5/20·8/19·11/19 18:00 = us-fs 24h 전)
 - Spot 실패는 단순 Catch → 온디맨드 재실행 (런당 비용이 작아 증거 기반 분류 생략 — calc §3과 동일 판단).
   같은 태스크 정의를 쓰고 capacity provider만 다르다. 재실행은 1회.
 - SFN 상태 단위 `TimeoutSeconds`(Spot 7200s / OD 7200s)로 침묵 타임아웃 방지.
-- 부분 실패(일부 종목 파싱 실패/티커 미매칭)는 기존처럼 스킵하고 counts에 기록, `status: partial`.
-  MERGE 자체가 실패하면 `status: error` + exit 1 → SFN Catch/알람.
+- 부분 실패 정책(최종 리뷰 M1 반영): 파싱 실패율 ≤1%는 `ok`(낱개 실패로 calc 게이트가 분기 전체를
+  스킵하지 않도록 허용 오차), >1%는 `partial`. **`ok`가 아니면 exit 1** → SFN Catch→온디맨드 1회
+  재시도 후에도 실패면 알람 — 무음 스테일 방지. run-summary 업로드 실패도 error로 승격.
+  MERGE 실패 시 `status: error` + exit 1.
 - run-summary는 try/finally에서 항상 기록(실패 포함 런당 1건). 신선도 판정은 `written_at_utc` 기준(calc §6.1).
 - 진행 현황·세션 간 전달 사항은 `docs/temp/STATUS.md` 단일 문서로 유지.
 

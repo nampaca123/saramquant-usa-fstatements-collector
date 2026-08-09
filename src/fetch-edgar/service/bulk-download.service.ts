@@ -63,7 +63,7 @@ export class BulkDownloadService {
         );
         const resp = await this.http.get(BULK_FACTS_URL, {
           responseType: 'stream',
-          timeout: 14_400_000, // 4h max
+          timeout: 2_400_000, // 40m — SFN 상태 타임아웃(2h)보다 짧아야 앱 레벨 재시도가 먼저 돈다 (us-east-1 실측 ~10초)
         });
 
         const total = parseInt(String(resp.headers['content-length'] ?? '0'), 10);

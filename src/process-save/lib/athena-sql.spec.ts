@@ -4,10 +4,17 @@ import {
   dropStagingSql,
   mergeSql,
   optimizeSql,
+  stagingTableName,
   vacuumSql,
 } from './athena-sql';
 
 describe('athena-sql', () => {
+  it('scopes staging table name to run and sanitizes for glue', () => {
+    expect(stagingTableName('run-42')).toBe('financial_statements_staging_us_run_42');
+    expect(stagingTableName('Cold-260810')).toBe('financial_statements_staging_us_cold_260810');
+    expect(stagingTableName('a.b:c/d')).toBe('financial_statements_staging_us_a_b_c_d');
+  });
+
   it('creates iceberg table partitioned by market with zstd', () => {
     const sql = createIcebergTableSql('saramquant', 'saramquant-bucket');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS saramquant.financial_statements');
@@ -21,21 +28,23 @@ describe('athena-sql', () => {
   });
 
   it('binds staging table to run-scoped location', () => {
-    const sql = createStagingSql('saramquant', 'saramquant-bucket', 'run-42');
-    expect(sql).toContain('financial_statements_staging_us');
+    const t = stagingTableName('run-42');
+    const sql = createStagingSql('saramquant', t, 'saramquant-bucket', 'run-42');
+    expect(sql).toContain(`CREATE EXTERNAL TABLE saramquant.${t}`);
     expect(sql).toContain('s3://saramquant-bucket/staging/financial_statements/run-42/');
     expect(sql).toContain('STORED AS PARQUET');
   });
 
   it('drops staging idempotently', () => {
-    expect(dropStagingSql('saramquant')).toBe(
-      'DROP TABLE IF EXISTS saramquant.financial_statements_staging_us',
+    expect(dropStagingSql('saramquant', 'financial_statements_staging_us_run_42')).toBe(
+      'DROP TABLE IF EXISTS saramquant.financial_statements_staging_us_run_42',
     );
   });
 
   it('merges on natural key scoped to US market', () => {
-    const sql = mergeSql('saramquant');
+    const sql = mergeSql('saramquant', 'financial_statements_staging_us_run_42');
     expect(sql).toContain('MERGE INTO saramquant.financial_statements t');
+    expect(sql).toContain('USING saramquant.financial_statements_staging_us_run_42 s');
     expect(sql).toContain("t.market = 'US'");
     expect(sql).toContain('t.stock_id = s.stock_id');
     expect(sql).toContain('t.fiscal_year = s.fiscal_year');

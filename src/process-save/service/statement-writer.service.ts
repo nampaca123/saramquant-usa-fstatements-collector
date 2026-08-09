@@ -14,8 +14,23 @@ import {
   dropStagingSql,
   mergeSql,
   optimizeSql,
+  stagingTableName,
   vacuumSql,
 } from '../lib/athena-sql';
+
+const MONEY_FIELDS = [
+  'revenue',
+  'operating_income',
+  'net_income',
+  'total_assets',
+  'total_liabilities',
+  'total_equity',
+] as const;
+
+export interface WriteResult {
+  saved: number;
+  coerced: number; // DECIMAL(20,2)/BIGINT 범위를 벗어나 null로 강제된 셀 수
+}
 
 @Injectable()
 export class StatementWriterService {
@@ -28,11 +43,12 @@ export class StatementWriterService {
     private readonly athena: AthenaClientService,
   ) {}
 
-  async upsertBatch(statements: FinancialStatement[]): Promise<number> {
-    if (statements.length === 0) return 0;
+  async upsertBatch(statements: FinancialStatement[]): Promise<WriteResult> {
+    if (statements.length === 0) return { saved: 0, coerced: 0 };
     const runId = this.config.get<string>('app.runId')!;
     const db = this.config.get<string>('app.glueDb')!;
     const bucket = this.config.get<string>('app.bucket')!;
+    const staging = stagingTableName(runId);
 
     const jsonlPath = join(DATA_DIR, 'statements.jsonl');
     const parquetPath = join(DATA_DIR, 'statements.parquet');
@@ -55,25 +71,34 @@ export class StatementWriterService {
       .join('\n');
     await writeFile(jsonlPath, jsonl);
 
-    // 로컬 Parquet 생성(zstd, 파일 내 정렬 stock_id·fiscal_year — calc 스펙 §2.3)
     const posixJsonl = jsonlPath.replace(/\\/g, '/');
     const posixParquet = parquetPath.replace(/\\/g, '/');
-    await this.duckdb.run(`COPY (
-      SELECT stock_id, fiscal_year, report_type,
-        CAST(revenue AS DECIMAL(20,2)) AS revenue,
-        CAST(operating_income AS DECIMAL(20,2)) AS operating_income,
-        CAST(net_income AS DECIMAL(20,2)) AS net_income,
-        CAST(total_assets AS DECIMAL(20,2)) AS total_assets,
-        CAST(total_liabilities AS DECIMAL(20,2)) AS total_liabilities,
-        CAST(total_equity AS DECIMAL(20,2)) AS total_equity,
-        CAST(shares_outstanding AS BIGINT) AS shares_outstanding
-      FROM read_json('${posixJsonl}', format='newline_delimited', columns={
+    // 전 수치 필드 VARCHAR로 읽고 TRY_CAST — XBRL 단위 오기재 등 범위 초과 값 하나가
+    // COPY 전체(=런 전체)를 죽이지 않게 셀 단위로 null 강제
+    const readJson = `read_json('${posixJsonl}', format='newline_delimited', columns={
         stock_id: 'BIGINT', fiscal_year: 'INTEGER', report_type: 'VARCHAR',
         revenue: 'VARCHAR', operating_income: 'VARCHAR', net_income: 'VARCHAR',
         total_assets: 'VARCHAR', total_liabilities: 'VARCHAR', total_equity: 'VARCHAR',
-        shares_outstanding: 'BIGINT'})
+        shares_outstanding: 'VARCHAR'})`;
+    const moneySelect = MONEY_FIELDS.map(
+      (c) => `TRY_CAST(${c} AS DECIMAL(20,2)) AS ${c}`,
+    ).join(',\n        ');
+
+    await this.duckdb.run(`COPY (
+      SELECT stock_id, fiscal_year, report_type,
+        ${moneySelect},
+        TRY_CAST(shares_outstanding AS BIGINT) AS shares_outstanding
+      FROM ${readJson}
       ORDER BY stock_id, fiscal_year
     ) TO '${posixParquet}' (FORMAT PARQUET, COMPRESSION ZSTD)`);
+
+    const coerceConds = [...MONEY_FIELDS.map((c) => `(${c} IS NOT NULL AND TRY_CAST(${c} AS DECIMAL(20,2)) IS NULL)`),
+      `(shares_outstanding IS NOT NULL AND TRY_CAST(shares_outstanding AS BIGINT) IS NULL)`];
+    const coerceRows = await this.duckdb.query(
+      `SELECT ${coerceConds.map((c, i) => `count(*) FILTER (WHERE ${c}) AS c${i}`).join(', ')} FROM ${readJson}`,
+    );
+    const coerced = (coerceRows[0] ?? []).reduce<number>((a, v) => a + Number(v), 0);
+    if (coerced > 0) this.logger.warn(`${coerced} cells out of range, coerced to null`);
 
     await this.s3.putObject(
       `staging/financial_statements/${runId}/statements.parquet`,
@@ -81,14 +106,23 @@ export class StatementWriterService {
     );
     this.logger.log(`staging uploaded: ${statements.length} rows (run ${runId})`);
 
-    await this.athena.execute(dropStagingSql(db));
-    await this.athena.execute(createStagingSql(db, bucket, runId));
-    await this.athena.execute(createIcebergTableSql(db, bucket));
-    await this.athena.execute(mergeSql(db));
-    await this.athena.execute(optimizeSql(db));
-    await this.athena.execute(vacuumSql(db));
+    try {
+      await this.athena.execute(dropStagingSql(db, staging));
+      await this.athena.execute(createStagingSql(db, staging, bucket, runId));
+      await this.athena.execute(createIcebergTableSql(db, bucket));
+      await this.athena.execute(mergeSql(db, staging));
+      await this.athena.execute(optimizeSql(db));
+      await this.athena.execute(vacuumSql(db));
+    } finally {
+      // 성공/실패 무관 staging 정리 — 남기면 만료된 prefix를 가리키는 좀비 테이블이 공유 Glue DB에 쌓인다
+      try {
+        await this.athena.execute(dropStagingSql(db, staging));
+      } catch (err) {
+        this.logger.warn(`staging cleanup failed (non-fatal): ${err}`);
+      }
+    }
 
     this.logger.log(`Merged ${statements.length} rows into ${db}.financial_statements`);
-    return statements.length;
+    return { saved: statements.length, coerced };
   }
 }
