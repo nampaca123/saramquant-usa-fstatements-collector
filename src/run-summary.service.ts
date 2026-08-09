@@ -42,11 +42,7 @@ export class RunSummaryService {
     };
     // 실패 포함 런당 1레코드 — CloudWatch에도 같은 내용을 JSON 1줄로 남긴다
     this.logger.log(JSON.stringify({ event: 'run_summary', ...summary }));
-    try {
-      await this.s3.putObject(SUMMARY_KEY, JSON.stringify(summary, null, 2), 'application/json');
-    } catch (err) {
-      // 서머리 업로드 실패가 파이프라인 결과를 뒤집지 않게 한다 (신선도 게이트만 늦어짐)
-      this.logger.error(`run-summary upload failed: ${err}`);
-    }
+    // 업로드 실패는 삼키지 않는다 — 호출자(runner)가 error로 승격해 알람 경로를 태운다
+    await this.s3.putObject(SUMMARY_KEY, JSON.stringify(summary, null, 2), 'application/json');
   }
 }

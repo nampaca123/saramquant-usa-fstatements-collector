@@ -49,11 +49,11 @@ jobs:
           terraform fmt -check -recursive
           terraform validate
 
-      # Dockerfile+src 전체 해시 — Dockerfile만 해싱하면 소스 변경이 태그에 안 잡혀 새 코드가 영구 미배포된다
+      # Dockerfile+락파일+src 전체 해시 — Dockerfile만 해싱하면 소스/의존성 변경이 태그에 안 잡혀 새 코드가 영구 미배포된다
       - name: Compute image tag
         working-directory: .
         run: |
-          TAG=$( { cat Dockerfile package.json; find src -type f | sort | xargs cat; } | md5sum | cut -c1-12 )
+          TAG=$( { cat Dockerfile package.json package-lock.json; find src -type f | sort | xargs cat; } | md5sum | cut -c1-12 )
           echo "TF_VAR_image_tag=$TAG" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 
@@ -62,11 +62,11 @@ jobs:
 
       # 이미지 푸시 전에 ECR 저장소부터 — 첫 배포의 닭-달걀 해소
       - name: Pre-create ECR (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: terraform apply -input=false -auto-approve -target=aws_ecr_repository.collector
 
       - name: Build & push image (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         working-directory: .
         run: |
           REPO=$(aws ecr describe-repositories --repository-names saramquant-usa-fs-collector \
@@ -85,5 +85,5 @@ jobs:
 
       # -auto-approve가 아니라 저장된 plan 적용 — plan 밖 변경이 조용히 적용되는 것 방지
       - name: Terraform apply (main only)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: terraform apply -input=false tfplan

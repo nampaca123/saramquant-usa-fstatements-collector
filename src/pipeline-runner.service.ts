@@ -12,6 +12,10 @@ export interface PipelineResult {
   cause: string | null;
 }
 
+// 파싱 실패율이 이 이하면 ok — 소비자(calc us-fs 게이트)는 status!=='ok'를 전부 리젝트하므로,
+// 6천 종목 중 낱개 실패로 분기 전체 펀더멘털이 멈추지 않게 허용 오차를 둔다
+const PARTIAL_THRESHOLD = 0.01;
+
 @Injectable()
 export class PipelineRunnerService {
   private readonly logger = new Logger(PipelineRunnerService.name);
@@ -33,8 +37,13 @@ export class PipelineRunnerService {
     } catch (err) {
       result = { status: 'error', counts: {}, cause: String(err) };
       this.logger.error(`pipeline crashed: ${err}`);
-    } finally {
+    }
+    try {
       await this.runSummary.write(startedAt, result);
+    } catch (err) {
+      // 서머리가 없으면 calc 게이트가 스테일 파일을 읽고 무음 리젝트한다 — error로 승격해 알람 경로를 태운다
+      this.logger.error(`run-summary upload failed: ${err}`);
+      if (result.status !== 'error') return 'error';
     }
     return result.status;
   }
@@ -64,15 +73,19 @@ export class PipelineRunnerService {
       },
     );
 
-    const saved = await this.statementWriter.upsertBatch(statements);
+    const { saved, coerced } = await this.statementWriter.upsertBatch(statements);
     this.logger.log(`Done: ${saved} rows merged from ${matched} stocks, ${failed} failed`);
+
+    const failRate = failed / Math.max(matched + failed, 1);
     return {
-      status: failed > 0 ? 'partial' : 'ok',
+      status: failRate > PARTIAL_THRESHOLD ? 'partial' : 'ok',
       counts: {
         stocks: { ok: matched, failed },
-        financial_statements: { ok: saved, failed: 0 },
+        // SEC 티커맵에 없어 매칭 자체가 안 된 종목 — failed와 별개로 가시화
+        ticker_match: { ok: matched, failed: Math.max(stocks.length - matched - failed, 0) },
+        financial_statements: { ok: saved, failed: coerced },
       },
-      cause: null,
+      cause: failRate > PARTIAL_THRESHOLD ? `parse failure rate ${(failRate * 100).toFixed(1)}%` : null,
     };
   }
 }

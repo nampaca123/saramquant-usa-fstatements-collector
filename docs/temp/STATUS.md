@@ -9,13 +9,23 @@
 
 | Task | 상태 |
 |---|---|
-| P1 브랜치·STATUS·의존성 | 진행 중 |
-| P2–P6 코드 전환 | 대기 |
-| P7 Dockerfile | 대기 |
-| P8–P10 Terraform | 대기 |
-| P11 CI/CD·배포 | 대기 |
-| P12 스모크 | 대기 |
-| P13 콜드 완주 | 대기 |
+| P1–P6 코드 전환 (원샷 러너, DuckDB stocks, Athena MERGE, run-summary) | **완료** |
+| P7 Dockerfile (node:24-slim, 확장 베이크) | **완료** (CI 빌드에서 오프라인 LOAD 검증됨) |
+| P8–P10 Terraform (VPC·ECS·IAM·SFN·EventBridge·SNS) | **완료** |
+| P11 CI/CD·배포 | **완료** — PR #1 머지, main apply 성공 (2026-08-09 14:05 KST) |
+| P12 스모크 | **완료** — 2차(smoke2-260810, 20종목 제한): 18종목/71행 MERGE, status ok, 3분 4초 |
+| P13 콜드 완주 | **완료** — cold-260810 (SFN→Fargate Spot, 폴백 없음): 5,879종목 매칭/0 실패, **45,810행 MERGE**, 4.5분, run-summary ok. Athena 검증 45,810행/4,672종목, DuckDB 소비 경로 확인(KR 19,505행과 파티션 공존 정상) |
+
+### P12 1차 스모크 소견 (2026-08-09 15:07 UTC, run_id=smoke-260810)
+- `status:error, cause:"no active US stocks"` — **수집기 결함 아님.** calc 세션이 stocks를
+  "전체 DELETE→소량 INSERT" 사이클로 테스트 중이라, 읽은 시점의 current snapshot이 records=0였음
+  (스냅샷 히스토리로 확인). 현재 3행 수준.
+- 활성 US ≥100이 2회 연속(10분 간격) 관측되면 스모크 재실행 예정. 모니터 가동 중.
+- calc 세션 참고: 운영 스케줄상 겹침 없음(우리 18:00 UTC vs calc us 00:00/kr 09:00 UTC).
+  다만 stocks가 MERGE(스펙 §2.3)가 아닌 delete-all 패턴으로 계속 쓰이면 읽기 시점 레이스가 생기니 확인 요망.
+
+배포된 리소스: SFN `saramquant-usa-fs-pipeline`(us-east-1), ECS 클러스터 `saramquant-usa-fs`(FARGATE+SPOT),
+태스크 정의 rev1 (2vCPU/4GB/40GiB), ECR 이미지 `0e6670b33357`, EventBridge 4규칙(q1–q4), SNS 알람.
 
 ## 타 세션 의존성 (선행 조건)
 
@@ -27,11 +37,16 @@
 | `saramquant.stocks` (US 종목 채워짐) | calc 세션 | 미존재 — 콜드 런의 필수 선행 |
 | `saramquant.financial_statements` DDL | calc 소유, 이 레포는 CREATE IF NOT EXISTS 멱등 | — |
 
-## 이 세션이 타 세션에 전달할 사항
+## 이 세션이 타 세션에 전달할 사항 (2026-08-10 완주 시점)
 
-- (완주 후) `financial_statements` US 행 적재 완료 여부, `run-summary/usa_fstatements.json` 위치.
-- 스케줄: UTC 4/5·5/20·8/19·11/19 18:00 (calc us-fs 24h 전).
-- tfstate 버킷을 이 세션이 부트스트랩했다면 그 사실.
+- **콜드 완주 완료**: `saramquant.financial_statements`에 US 45,810행(4,672종목) 적재됨.
+  `run-summary/usa_fstatements.json`이 `status: ok`로 기록되어 calc `us-fs` 신선도 게이트 통과 가능.
+- 스케줄: UTC 4/5·5/20·8/19·11/19 18:00 (calc us-fs 24h 전). 실행당 약 5분 소요.
+- `financial_statements` 테이블은 이 세션이 `CREATE TABLE IF NOT EXISTS`로 생성했음
+  (calc 스펙 §2.3 DDL 그대로: 파티션 market, decimal(20,2), created_at timestamp).
+  calc의 KR 행(19,505행)과 정상 공존 확인됨.
+- calc 세션 참고: stocks 테이블이 delete-all→insert 사이클로 재작성되는 동안 읽으면
+  0행 스냅샷에 걸릴 수 있음(2026-08-09 스모크 1차에서 실제 발생). 운영 스케줄상 겹침은 없음.
 
 ## 주요 결정/이슈 로그
 
