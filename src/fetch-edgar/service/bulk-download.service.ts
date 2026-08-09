@@ -66,7 +66,7 @@ export class BulkDownloadService {
           timeout: 14_400_000, // 4h max
         });
 
-        const total = parseInt(resp.headers['content-length'] ?? '0', 10);
+        const total = parseInt(String(resp.headers['content-length'] ?? '0'), 10);
         let downloaded = 0;
         let lastLoggedPct = -1;
 

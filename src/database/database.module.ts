@@ -1,10 +1,11 @@
 import { Global, Module } from '@nestjs/common';
-import { DatabasePool } from './lib/pool';
+import { DuckDbClientService } from './lib/duckdb-client.service';
+import { GlueCatalogService } from './lib/glue-catalog.service';
 import { StockListService } from './service/stock-list.service';
 
 @Global()
 @Module({
-  providers: [DatabasePool, StockListService],
-  exports: [DatabasePool, StockListService],
+  providers: [DuckDbClientService, GlueCatalogService, StockListService],
+  exports: [DuckDbClientService, GlueCatalogService, StockListService],
 })
 export class DatabaseModule {}

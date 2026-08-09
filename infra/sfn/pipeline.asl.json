@@ -1,0 +1,82 @@
+{
+  "Comment": "usa-fstatements collector: Fargate Spot with on-demand fallback",
+  "StartAt": "RunTaskSpot",
+  "States": {
+    "RunTaskSpot": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Comment": "상태 단위 TimeoutSeconds — 실행 레벨 타임아웃은 Catch를 안 타서 무음으로 끝난다",
+      "TimeoutSeconds": 7200,
+      "Parameters": {
+        "Cluster": "${cluster_arn}",
+        "TaskDefinition": "${task_def_arn}",
+        "CapacityProviderStrategy": [
+          { "CapacityProvider": "FARGATE_SPOT", "Weight": 1 }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ${subnet_ids},
+            "SecurityGroups": ["${sg_id}"],
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "collector",
+              "Environment": [
+                { "Name": "RUN_ID", "Value.$": "$$.Execution.Name" }
+              ]
+            }
+          ]
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["ECS.AmazonECSException"],
+          "MaxAttempts": 1,
+          "IntervalSeconds": 60
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.spot_error",
+          "Next": "RunTaskOnDemand"
+        }
+      ],
+      "End": true
+    },
+    "RunTaskOnDemand": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::ecs:runTask.sync",
+      "Comment": "Spot 중단·용량 부족 폴백 — 1회만, 재시도 없음 (MERGE가 멱등이라 안전)",
+      "TimeoutSeconds": 7200,
+      "Parameters": {
+        "Cluster": "${cluster_arn}",
+        "TaskDefinition": "${task_def_arn}",
+        "CapacityProviderStrategy": [
+          { "CapacityProvider": "FARGATE", "Weight": 1 }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": ${subnet_ids},
+            "SecurityGroups": ["${sg_id}"],
+            "AssignPublicIp": "ENABLED"
+          }
+        },
+        "Overrides": {
+          "ContainerOverrides": [
+            {
+              "Name": "collector",
+              "Environment": [
+                { "Name": "RUN_ID", "Value.$": "$$.Execution.Name" }
+              ]
+            }
+          ]
+        }
+      },
+      "End": true
+    }
+  }
+}
