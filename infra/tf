@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# terraform 래퍼 — 공유 S3 state를 만지는 명령은 CI에서만 허용한다.
+# 로컬 plan/apply가 stale 락을 남기면 CI 전체가 교착된다 (회사 프로젝트 실사고 선례).
+set -euo pipefail
+
+cmd="${1:-}"
+BLOCKED="plan apply destroy refresh import state force-unlock taint untaint"
+
+if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
+  for b in $BLOCKED; do
+    if [[ "$cmd" == "$b" ]]; then
+      echo "ERROR: 'terraform $cmd' is CI-only — it touches the shared S3 state lock." >&2
+      echo "Local verification: run 'make check' from repo root." >&2
+      exit 1
+    fi
+  done
+fi
+
+exec terraform "$@"
