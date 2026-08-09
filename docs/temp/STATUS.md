@@ -21,10 +21,10 @@
 
 | 항목 | 소유 | 상태 (마지막 확인) |
 |---|---|---|
-| `s3://saramquant-tfstate` (Terraform state) | 공유 — 최초 부트스트랩 1회 | **미존재** (2026-08-09 버킷 목록에 없음) → P11에서 없으면 이 세션이 부트스트랩 |
-| Glue DB `saramquant` | calc 세션 | 미확인 |
-| Athena 워크그룹 `saramquant` | calc 세션 | 미확인 |
-| `saramquant.stocks` (US 종목 채워짐) | calc 세션 | 미확인 — 콜드 런의 필수 선행 |
+| `s3://saramquant-tfstate` (Terraform state) | 공유 — 최초 부트스트랩 1회 | **존재** (2026-08-09 14:00 KST 확인 — 타 세션이 부트스트랩) |
+| Glue DB `saramquant` | calc 세션 | **미존재** (2026-08-09 14:00 확인) — 스모크/콜드 런 차단 요인 |
+| Athena 워크그룹 `saramquant` | calc 세션 | **미존재** (동일 시점) |
+| `saramquant.stocks` (US 종목 채워짐) | calc 세션 | 미존재 — 콜드 런의 필수 선행 |
 | `saramquant.financial_statements` DDL | calc 소유, 이 레포는 CREATE IF NOT EXISTS 멱등 | — |
 
 ## 이 세션이 타 세션에 전달할 사항

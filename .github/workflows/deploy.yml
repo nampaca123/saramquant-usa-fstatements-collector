@@ -1,0 +1,89 @@
+name: deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 진행 중 apply를 취소하면 state가 깨진다 — 직렬화만, 취소 금지
+concurrency:
+  group: terraform-state-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.repository == 'nampaca123/saramquant-usa-fstatements-collector'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      TF_VAR_bucket_name: ${{ vars.SARAMQUANT_S3_BUCKET_NAME }}
+      TF_VAR_glue_db: ${{ vars.SARAMQUANT_GLUE_DB }}
+      TF_VAR_athena_workgroup: ${{ vars.SARAMQUANT_ATHENA_WORKGROUP }}
+      TF_VAR_alert_email: ${{ vars.SARAMQUANT_ALERT_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.SARAMQUANT_IAM_KEY_ACCESS }}
+          aws-secret-access-key: ${{ secrets.SARAMQUANT_IAM_KEY_SECRET }}
+          aws-region: us-east-1
+
+      - name: Verify identity
+        run: aws sts get-caller-identity
+
+      - name: Check (fmt/validate, no backend)
+        run: |
+          terraform init -backend=false -input=false
+          terraform fmt -check -recursive
+          terraform validate
+
+      # Dockerfile+src 전체 해시 — Dockerfile만 해싱하면 소스 변경이 태그에 안 잡혀 새 코드가 영구 미배포된다
+      - name: Compute image tag
+        working-directory: .
+        run: |
+          TAG=$( { cat Dockerfile package.json; find src -type f | sort | xargs cat; } | md5sum | cut -c1-12 )
+          echo "TF_VAR_image_tag=$TAG" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      # 이미지 푸시 전에 ECR 저장소부터 — 첫 배포의 닭-달걀 해소
+      - name: Pre-create ECR (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -input=false -auto-approve -target=aws_ecr_repository.collector
+
+      - name: Build & push image (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: .
+        run: |
+          REPO=$(aws ecr describe-repositories --repository-names saramquant-usa-fs-collector \
+            --query 'repositories[0].repositoryUri' --output text)
+          if aws ecr describe-images --repository-name saramquant-usa-fs-collector \
+            --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "image $IMAGE_TAG already pushed, skipping build"
+            exit 0
+          fi
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
+          docker build -t "$REPO:$IMAGE_TAG" .
+          docker push "$REPO:$IMAGE_TAG"
+
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+
+      # -auto-approve가 아니라 저장된 plan 적용 — plan 밖 변경이 조용히 적용되는 것 방지
+      - name: Terraform apply (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -input=false tfplan
