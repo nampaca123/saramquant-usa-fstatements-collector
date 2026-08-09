@@ -9,13 +9,15 @@
 
 | Task | 상태 |
 |---|---|
-| P1 브랜치·STATUS·의존성 | 진행 중 |
-| P2–P6 코드 전환 | 대기 |
-| P7 Dockerfile | 대기 |
-| P8–P10 Terraform | 대기 |
-| P11 CI/CD·배포 | 대기 |
-| P12 스모크 | 대기 |
+| P1–P6 코드 전환 (원샷 러너, DuckDB stocks, Athena MERGE, run-summary) | **완료** |
+| P7 Dockerfile (node:24-slim, 확장 베이크) | **완료** (CI 빌드에서 오프라인 LOAD 검증됨) |
+| P8–P10 Terraform (VPC·ECS·IAM·SFN·EventBridge·SNS) | **완료** |
+| P11 CI/CD·배포 | **완료** — PR #1 머지, main apply 성공 (2026-08-09 14:05 KST) |
+| P12 스모크 | **차단** — calc 세션의 Glue DB·워크그룹·stocks 대기 (모니터 가동 중) |
 | P13 콜드 완주 | 대기 |
+
+배포된 리소스: SFN `saramquant-usa-fs-pipeline`(us-east-1), ECS 클러스터 `saramquant-usa-fs`(FARGATE+SPOT),
+태스크 정의 rev1 (2vCPU/4GB/40GiB), ECR 이미지 `0e6670b33357`, EventBridge 4규칙(q1–q4), SNS 알람.
 
 ## 타 세션 의존성 (선행 조건)
 
