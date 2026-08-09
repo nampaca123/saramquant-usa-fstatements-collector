@@ -13,8 +13,8 @@
 | P7 Dockerfile (node:24-slim, 확장 베이크) | **완료** (CI 빌드에서 오프라인 LOAD 검증됨) |
 | P8–P10 Terraform (VPC·ECS·IAM·SFN·EventBridge·SNS) | **완료** |
 | P11 CI/CD·배포 | **완료** — PR #1 머지, main apply 성공 (2026-08-09 14:05 KST) |
-| P12 스모크 | **1차 실행 완료(경로 검증 성공)** — 인프라 전 구간 정상: zip 1336MB 다운로드(~5초, us-east-1), 해제, 티커맵 10,398건, DuckDB stocks 읽기, run-summary 기록/업로드, exit 1 전파. 데이터만 없었음(아래) |
-| P13 콜드 완주 | 대기 — stocks 안정 적재 후 |
+| P12 스모크 | **완료** — 2차(smoke2-260810, 20종목 제한): 18종목/71행 MERGE, status ok, 3분 4초 |
+| P13 콜드 완주 | **완료** — cold-260810 (SFN→Fargate Spot, 폴백 없음): 5,879종목 매칭/0 실패, **45,810행 MERGE**, 4.5분, run-summary ok. Athena 검증 45,810행/4,672종목, DuckDB 소비 경로 확인(KR 19,505행과 파티션 공존 정상) |
 
 ### P12 1차 스모크 소견 (2026-08-09 15:07 UTC, run_id=smoke-260810)
 - `status:error, cause:"no active US stocks"` — **수집기 결함 아님.** calc 세션이 stocks를
@@ -37,11 +37,16 @@
 | `saramquant.stocks` (US 종목 채워짐) | calc 세션 | 미존재 — 콜드 런의 필수 선행 |
 | `saramquant.financial_statements` DDL | calc 소유, 이 레포는 CREATE IF NOT EXISTS 멱등 | — |
 
-## 이 세션이 타 세션에 전달할 사항
+## 이 세션이 타 세션에 전달할 사항 (2026-08-10 완주 시점)
 
-- (완주 후) `financial_statements` US 행 적재 완료 여부, `run-summary/usa_fstatements.json` 위치.
-- 스케줄: UTC 4/5·5/20·8/19·11/19 18:00 (calc us-fs 24h 전).
-- tfstate 버킷을 이 세션이 부트스트랩했다면 그 사실.
+- **콜드 완주 완료**: `saramquant.financial_statements`에 US 45,810행(4,672종목) 적재됨.
+  `run-summary/usa_fstatements.json`이 `status: ok`로 기록되어 calc `us-fs` 신선도 게이트 통과 가능.
+- 스케줄: UTC 4/5·5/20·8/19·11/19 18:00 (calc us-fs 24h 전). 실행당 약 5분 소요.
+- `financial_statements` 테이블은 이 세션이 `CREATE TABLE IF NOT EXISTS`로 생성했음
+  (calc 스펙 §2.3 DDL 그대로: 파티션 market, decimal(20,2), created_at timestamp).
+  calc의 KR 행(19,505행)과 정상 공존 확인됨.
+- calc 세션 참고: stocks 테이블이 delete-all→insert 사이클로 재작성되는 동안 읽으면
+  0행 스냅샷에 걸릴 수 있음(2026-08-09 스모크 1차에서 실제 발생). 운영 스케줄상 겹침은 없음.
 
 ## 주요 결정/이슈 로그
 
