@@ -1,0 +1,73 @@
+# AWS 리소스 회수 전용 워크플로. 수동 실행 + confirm 입력이 있어야만 동작한다.
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm teardown'
+        required: true
+        type: string
+
+# 진행 중 destroy를 취소하면 state가 깨진다 — 직렬화만, 취소 금지
+concurrency:
+  group: terraform-state-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    if: github.repository == 'nampaca123/saramquant-usa-fstatements-collector' && inputs.confirm == 'destroy'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      TF_VAR_bucket_name: ${{ vars.SARAMQUANT_S3_BUCKET_NAME }}
+      TF_VAR_glue_db: ${{ vars.SARAMQUANT_GLUE_DB }}
+      TF_VAR_athena_workgroup: ${{ vars.SARAMQUANT_ATHENA_WORKGROUP }}
+      TF_VAR_alert_email: ${{ vars.SARAMQUANT_ALERT_EMAIL }}
+      # 파괴만 하므로 이미지 태그 실값은 불필요 — validation(length > 0)만 통과시킨다
+      TF_VAR_image_tag: destroy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.SARAMQUANT_IAM_KEY_ACCESS }}
+          aws-secret-access-key: ${{ secrets.SARAMQUANT_IAM_KEY_SECRET }}
+          aws-region: us-east-1
+
+      - name: Verify identity
+        run: aws sts get-caller-identity
+
+      - name: Terraform init
+        run: terraform init -reconfigure -input=false
+
+      - name: State before
+        run: terraform state list
+
+      # ECR 리포지토리에 force_delete가 없어 이미지가 남아 있으면 destroy가 실패한다
+      - name: Empty ECR repository
+        run: |
+          set -euo pipefail
+          ids=$(aws ecr list-images --repository-name saramquant-usa-fs-collector --query 'imageIds[*]' --output json 2>/dev/null || echo '[]')
+          if [ "$ids" != "[]" ]; then
+            aws ecr batch-delete-image --repository-name saramquant-usa-fs-collector --image-ids "$ids" >/dev/null
+            echo "emptied saramquant-usa-fs-collector"
+          else
+            echo "saramquant-usa-fs-collector already empty or absent"
+          fi
+
+      - name: Terraform plan (destroy)
+        run: terraform plan -destroy -input=false -out=tfdestroy
+
+      - name: Terraform destroy
+        run: terraform apply -input=false tfdestroy
